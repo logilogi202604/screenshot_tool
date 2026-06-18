@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# PyInstaller build artifacts (exe is distributed via GitHub Releases)
+build/
+dist/
+*.spec
+
+# Codex review / debug scratch files
+_codex_review.md
+_*.txt
+_*.png
+
+# OS
+Thumbs.db
+.DS_Store
