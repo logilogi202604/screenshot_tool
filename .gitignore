@@ -10,7 +10,7 @@ dist/
 *.spec
 
 # Codex review / debug scratch files
-_codex_review.md
+_codex_review*.md
 _*.txt
 _*.png
 
