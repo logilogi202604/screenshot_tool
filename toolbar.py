@@ -73,6 +73,7 @@ class Toolbar(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
 
         self._color_buttons = []
+        self._active_tool = None
         self._build()
 
     def _sep(self):
@@ -163,13 +164,17 @@ class Toolbar(QWidget):
         return btn
 
     def _on_tool_clicked(self, tool_id, checked):
-        # Allow toggling a tool off to return to plain selection mode.
-        if not checked:
+        # An exclusive QButtonGroup never reports checked=False (you can't uncheck
+        # the active button by clicking it), so track the active tool ourselves:
+        # clicking the already-active tool toggles back to plain selection mode.
+        if tool_id == self._active_tool:
             self.tool_group.setExclusive(False)
             self._tool_buttons[tool_id].setChecked(False)
             self.tool_group.setExclusive(True)
+            self._active_tool = None
             self.tool_changed.emit(None)
         else:
+            self._active_tool = tool_id
             self.tool_changed.emit(tool_id)
 
     def _pick_custom_color(self):
@@ -186,3 +191,4 @@ class Toolbar(QWidget):
         for b in self._tool_buttons.values():
             b.setChecked(False)
         self.tool_group.setExclusive(True)
+        self._active_tool = None

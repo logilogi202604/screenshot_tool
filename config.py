@@ -45,6 +45,18 @@ def load_config():
     if not isinstance(hk.get("key"), str) or not hk["key"]:
         hk["key"] = DEFAULTS["hotkey"]["key"]
     cfg["hotkey"] = hk
+
+    # save_dir must be a usable string path (a null/number would make
+    # os.makedirs raise TypeError and crash the save/open flows).
+    if not isinstance(cfg.get("save_dir"), str) or not cfg["save_dir"].strip():
+        cfg["save_dir"] = DEFAULTS["save_dir"]
+
+    # numeric fields must be positive numbers (used in arithmetic / QPen widths).
+    for key in ("default_width", "default_font_size"):
+        v = cfg.get(key)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+            cfg[key] = DEFAULTS[key]
+
     return cfg
 
 
