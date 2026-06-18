@@ -1,7 +1,16 @@
 # 截图工具 (Screenshot Tool)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/Python-3.11-blue.svg)
+![PySide6](https://img.shields.io/badge/PySide6-6.11-green.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)
+[![Release](https://img.shields.io/github/v/release/logilogi202604/screenshot_tool)](https://github.com/logilogi202604/screenshot_tool/releases/latest)
+
 一个类似微信截图的桌面工具：全局热键唤起，框选区域，标注（矩形 / 椭圆 / 箭头 / 画笔 / 马赛克 / 序号 / 文字）、
 多种颜色与线宽，放大镜取色，复制到剪贴板或保存为图片。基于 **Python + PySide6**，常驻系统托盘。
+
+> **下载**：到 [Releases](https://github.com/logilogi202604/screenshot_tool/releases/latest) 下载
+> 单文件 `ScreenshotTool.exe`（免装 Python），双击运行 → 托盘出现相机图标 → 按 `Alt+A` 截图。
 
 ## 功能
 
@@ -143,3 +152,7 @@ python test_capture.py
 
 - 仅支持 **Windows**（全局热键用的是 Win32 API）。
 - 多显示器**混合不同 DPI** 时截图可能有缩放误差；相同缩放比例下正常。
+
+## 许可证
+
+[MIT](LICENSE) © logilogi202604
