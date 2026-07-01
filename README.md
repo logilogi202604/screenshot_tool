@@ -196,9 +196,11 @@ pip install pyinstaller
 | `config.py` | 配置读写（默认热键按平台区分） |
 | `run.bat` / `build.bat` | Windows 启动 / 打包（PyInstaller `.exe`） |
 | `run.command` / `build_mac.sh` | macOS 启动 / 打包（PyInstaller `.app`） |
-| `test_*.py` | 冒烟测试：核心渲染 / 全局热键 / 真实截图 |
+| `test_*.py` | 冒烟测试：核心渲染 / 全局热键 / 真实截图；`test_mac.py` 为 macOS 平台逻辑测试 |
 
 ## 测试
+
+Windows（PowerShell）：
 
 ```powershell
 # 核心渲染逻辑（离屏，无需显示器）
@@ -209,12 +211,19 @@ python test_hotkey.py
 python test_capture.py
 ```
 
+macOS（离屏，无需权限/显示器）：
+
+```bash
+QT_QPA_PLATFORM=offscreen python3 test_smoke.py   # 核心渲染
+QT_QPA_PLATFORM=offscreen python3 test_mac.py     # 热键跨线程 / 单实例互斥 / 复制+自动保存
+```
+
 ## 已知限制
 
 - **Windows / macOS 双平台**。热键实现按平台分离：Windows 用 Win32 `RegisterHotKey`（系统级、会
   “吃掉”触发键）；macOS 用 `pynput`（需「输入监控」权限，且**不会吃掉**触发键，故默认用不产生文本
   的 Cmd 组合）。Linux 暂无热键后端，但仍可点托盘图标截图。
-- **macOS 需要两项系统权限**（屏幕录制 / 输入监控），见上文；未授予时对应功能失效。
+- **macOS 需要系统权限**（屏幕录制 + 输入监控 / 辅助功能），见上文；未授予时对应功能失效。
 - 多显示器**混合不同 DPI** 时截图可能有缩放误差；相同缩放比例下正常。
 
 ## 许可证
