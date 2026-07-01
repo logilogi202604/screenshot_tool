@@ -5,14 +5,24 @@ preferences can be changed without touching the code.
 """
 import json
 import os
+import sys
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".screenshot_tool")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
+# Platform-appropriate default hotkey. The schema is identical everywhere; only
+# the default combo differs. On macOS `win` means the Command key, so this is
+# Cmd+Shift+A — a text-free combo (pynput can't suppress the keystroke, and a
+# plain Option+A would leak an "å" into the focused app). On Windows it's the
+# WeChat-style Alt+A (Ctrl+A would collide with "Select All" everywhere).
+if sys.platform == "darwin":
+    _DEFAULT_HOTKEY = {"ctrl": False, "alt": False, "shift": True, "win": True, "key": "A"}
+else:
+    _DEFAULT_HOTKEY = {"ctrl": False, "alt": True, "shift": False, "win": False, "key": "A"}
+
 DEFAULTS = {
-    # Global hotkey. Defaults to WeChat-style Alt+A (Ctrl+A would collide with
-    # "Select All" in every app). Edit ctrl/alt/shift/win/key and restart to change.
-    "hotkey": {"ctrl": False, "alt": True, "shift": False, "win": False, "key": "A"},
+    # Global hotkey. Edit ctrl/alt/shift/win/key and restart to change.
+    "hotkey": dict(_DEFAULT_HOTKEY),
     "save_dir": os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots"),
     "default_color": "#ff3b30",
     "default_width": 3,

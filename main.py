@@ -1,7 +1,6 @@
 """Entry point: lives in the system tray, listens for the global hotkey,
 and launches the capture overlay.
 """
-import ctypes
 import os
 import sys
 import traceback
@@ -23,8 +22,9 @@ from PySide6.QtWidgets import (
 )
 
 from config import CONFIG_DIR, load_config
-from hotkey import GlobalHotkey, describe_hotkey, modifiers_from_config, vk_from_key
+from hotkey import GlobalHotkey, describe_hotkey
 from overlay import ScreenshotOverlay
+from single_instance import acquire_single_instance
 
 LOG_PATH = os.path.join(CONFIG_DIR, "app.log")
 
@@ -61,12 +61,6 @@ def make_icon():
     return QIcon(pm)
 
 
-def acquire_single_instance():
-    """Return False if another instance already holds the named mutex."""
-    ctypes.windll.kernel32.CreateMutexW(None, False, "ScreenshotTool_Singleton_v1")
-    return ctypes.windll.kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
-
-
 class TrayApp:
     def __init__(self, app, config):
         self.app = app
@@ -76,14 +70,11 @@ class TrayApp:
 
         hk = config["hotkey"]
         self.combo = describe_hotkey(hk)
-        self.hotkey = GlobalHotkey(modifiers_from_config(hk), vk_from_key(hk["key"]))
-        app.installNativeEventFilter(self.hotkey)
-        # Bind the hotkey to the THREAD (hwnd=NULL) rather than a hidden window.
-        # A hidden window's native HWND can be torn down shortly after startup
-        # (notably in the packaged exe), and Windows auto-unregisters a hotkey when
-        # its owner window dies. The main thread lives for the whole app, so this is
-        # stable. WM_HOTKEY for a thread hotkey is delivered to our native filter.
-        ok = self.hotkey.register(None)
+        # The backend is chosen per-platform inside `hotkey`; `start` installs
+        # whatever event-loop hook it needs (native filter on Windows, listener
+        # thread on macOS) and registers the combo.
+        self.hotkey = GlobalHotkey.from_config(hk)
+        ok = self.hotkey.start(app)
         log(f"hotkey {self.combo} register_ok={ok} "
             f"err={getattr(self.hotkey, 'last_error', '?')}")
         self.hotkey.activated.connect(self._on_hotkey)
