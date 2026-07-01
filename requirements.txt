@@ -1,1 +1,3 @@
 PySide6>=6.6
+# macOS global hotkey backend (Windows uses the native Win32 API, no dep needed).
+pynput>=1.7 ; sys_platform == "darwin"
