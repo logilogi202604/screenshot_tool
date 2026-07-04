@@ -143,6 +143,14 @@ class TrayApp:
 
     def start_capture(self):
         log(f"start_capture (busy={self.overlay is not None}, pending={self._pending_capture})")
+        # Safety net: an overlay that got hidden without ever closing (macOS
+        # hides Qt.Tool windows on app deactivation, skipping closeEvent) would
+        # otherwise block every future capture. Discard it and carry on.
+        if (self.overlay is not None and not self.overlay.isVisible()
+                and not getattr(self.overlay, "dialog_open", False)):
+            log("discarding stale hidden overlay")
+            stale, self.overlay = self.overlay, None
+            stale.close()
         # Guard against two triggers within the 120ms delay both scheduling a
         # capture (e.g. a fast double Alt+A, or hotkey + tray click).
         if self.overlay is not None or self._pending_capture:
