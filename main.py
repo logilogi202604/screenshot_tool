@@ -76,6 +76,7 @@ class TrayApp:
         self.hotkey = GlobalHotkey.from_config(hk)
         ok = self.hotkey.start(app)
         log(f"hotkey {self.combo} register_ok={ok} "
+            f"suppresses={getattr(self.hotkey, 'suppresses', False)} "
             f"err={getattr(self.hotkey, 'last_error', '?')}")
         self.hotkey.activated.connect(self._on_hotkey)
 
