@@ -93,6 +93,103 @@ def test_single_instance_cross_process():
     print("B single-instance OK: lock re-acquirable after holder exits")
 
 
+def test_hidden_overlay_auto_cancels():
+    """macOS hides Qt.Tool windows on app deactivation without a closeEvent.
+    The overlay must treat that hide as cancel (emit `finished`), or the tray
+    app stays 'busy' forever and the hotkey looks dead. Regression: 2026-07."""
+    from config import DEFAULTS
+    from overlay import ScreenshotOverlay
+
+    pm = QPixmap(100, 60)
+    pm.fill(QColor("#222222"))
+
+    # 1) A hide with dialog_open set (save-dialog flow) must NOT cancel.
+    o1 = ScreenshotOverlay(pm, QRect(0, 0, 100, 60), dict(DEFAULTS))
+    done1 = []
+    o1.finished.connect(lambda: done1.append(True))
+    o1.show()
+    o1.dialog_open = True
+    o1.hide()
+    QTimer.singleShot(150, app.quit)
+    app.exec()
+    assert not done1, "save-dialog hide wrongly cancelled the capture"
+    o1.dialog_open = False
+    o1.close()
+
+    # 2) A bare hide (what macOS does on deactivate) must auto-cancel.
+    o2 = ScreenshotOverlay(pm, QRect(0, 0, 100, 60), dict(DEFAULTS))
+    done2 = []
+    o2.finished.connect(lambda: done2.append(True))
+    o2.show()
+    o2.hide()
+    QTimer.singleShot(150, app.quit)
+    app.exec()
+    assert done2, "hidden overlay never emitted finished (tray would stay busy)"
+    # `finished` drives TrayApp state; it must fire exactly once even though
+    # both the deferred hide-cancel and close() paths touched this overlay.
+    QTimer.singleShot(150, app.quit)
+    app.exec()
+    assert len(done2) == 1, f"finished emitted {len(done2)} times, expected exactly 1"
+    print("D hidden-overlay OK: deactivate-hide cancels once, save-dialog hide survives")
+
+
+def test_trayapp_discards_stale_overlay():
+    """TrayApp.start_capture must recover when the overlay got hidden without
+    closing (whatever the cause) instead of staying busy forever."""
+    import main as main_mod
+    from config import DEFAULTS
+    from overlay import ScreenshotOverlay
+    from PySide6.QtCore import QObject, Signal
+
+    class FakeHotkey(QObject):
+        activated = Signal()
+        registered = True
+        last_error = 0
+
+        @classmethod
+        def from_config(cls, hk):
+            return cls()
+
+        def start(self, app):  # noqa: ARG002
+            return True
+
+        def unregister(self):
+            pass
+
+    cfg = dict(DEFAULTS)
+    cfg["save_dir"] = tempfile.mkdtemp(prefix="shot_")
+
+    orig_hotkey = main_mod.GlobalHotkey
+    main_mod.GlobalHotkey = FakeHotkey
+    try:
+        tray = main_mod.TrayApp(app, cfg)
+    finally:
+        main_mod.GlobalHotkey = orig_hotkey
+    # Keep the test synchronous: the recovery logic under test lives entirely
+    # in start_capture; don't let the 120ms-deferred real capture run later.
+    tray._do_capture = lambda: None
+
+    pm = QPixmap(100, 60)
+    pm.fill(QColor("#333333"))
+    stale = ScreenshotOverlay(pm, QRect(0, 0, 100, 60), cfg)
+    stale.finished.connect(tray._on_overlay_finished)  # same wiring as _do_capture
+    tray.overlay = stale
+    stale.show()
+    stale.hide()  # hidden-but-not-closed, before the deferred cancel can run
+
+    tray.start_capture()  # must discard the stale overlay and proceed
+    assert tray.overlay is None, "stale hidden overlay not discarded"
+    assert tray._pending_capture, "capture not rescheduled after discarding stale overlay"
+    assert stale._closed, "stale overlay was dropped without being closed"
+
+    # While a capture is legitimately pending, a second trigger must still be
+    # ignored (the original double-trigger guard survives the recovery path).
+    tray.start_capture()
+    assert tray._pending_capture, "pending flag lost on duplicate trigger"
+    tray._pending_capture = False
+    print("E trayapp-recovery OK: stale overlay discarded, capture rescheduled")
+
+
 def test_hotkey_main_thread_delivery():
     from hotkey_mac import GlobalHotkey
 
@@ -121,6 +218,8 @@ def test_hotkey_main_thread_delivery():
 if __name__ == "__main__":
     test_copy_and_autosave()
     test_single_instance_cross_process()
+    test_hidden_overlay_auto_cancels()
+    test_trayapp_discards_stale_overlay()
     test_hotkey_main_thread_delivery()   # runs the event loop; keep last
     print("\nALL MAC AUTO-TESTS PASSED")
     sys.stdout.flush()

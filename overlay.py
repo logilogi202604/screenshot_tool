@@ -9,6 +9,7 @@ from PySide6.QtCore import (
     QRectF,
     Qt,
     QStandardPaths,
+    QTimer,
     QUrl,
     Signal,
 )
@@ -144,6 +145,13 @@ class ScreenshotOverlay(QWidget):
         self.toolbar = Toolbar(self)
         self._wire_toolbar()
         self.toolbar.hide()
+
+        # macOS hides Qt.Tool windows when the app deactivates (e.g. Cmd+Tab
+        # away). That hide bypasses closeEvent, so `finished` would never fire
+        # and the tray app would stay "busy" forever — hideEvent treats such a
+        # hide as cancel. `dialog_open` marks the save dialog's intentional hide.
+        self.dialog_open = False
+        self._closed = False
 
     def _build_mosaic_pix(self):
         """Whole screenshot pixelated once (device px) so mosaic strokes are cheap."""
@@ -684,11 +692,15 @@ class ScreenshotOverlay(QWidget):
                 save_dir = ""
 
         # The native dialog needs the overlay out of the way to avoid focus fights.
+        self.dialog_open = True
         self.hide()
-        default = os.path.join(save_dir, "screenshot.png") if save_dir else "screenshot.png"
-        path, _ = QFileDialog.getSaveFileName(
-            None, "保存截图", default, "PNG 图片 (*.png);;JPEG 图片 (*.jpg)"
-        )
+        try:
+            default = os.path.join(save_dir, "screenshot.png") if save_dir else "screenshot.png"
+            path, _ = QFileDialog.getSaveFileName(
+                None, "保存截图", default, "PNG 图片 (*.png);;JPEG 图片 (*.jpg)"
+            )
+        finally:
+            self.dialog_open = False
         if not path:
             self._restore_overlay()
             return
@@ -725,6 +737,18 @@ class ScreenshotOverlay(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if not self._closed and not self.dialog_open:
+            # Deferred so the hide that is part of close(), or one immediately
+            # followed by a re-show, doesn't double-cancel.
+            QTimer.singleShot(0, self._close_if_still_hidden)
+
+    def _close_if_still_hidden(self):
+        if not self._closed and not self.dialog_open and not self.isVisible():
+            self.cancel()
+
     def closeEvent(self, event):
+        self._closed = True
         self.finished.emit()
         super().closeEvent(event)
