@@ -139,6 +139,7 @@ class ScreenshotOverlay(QWidget):
         self.pen_width = config.get("default_width", 4)
         self.font_size = config.get("default_font_size", 18)
         self.text_editor = None
+        self._editing_original = None  # label being re-edited; restored on cancel
         self.dragging_text = None
         self.text_drag_offset = QPoint()
 
@@ -152,6 +153,7 @@ class ScreenshotOverlay(QWidget):
         # hide as cancel. `dialog_open` marks the save dialog's intentional hide.
         self.dialog_open = False
         self._closed = False
+        self.native_check_error = None  # last native_on_screen() failure, if any
 
     def _build_mosaic_pix(self):
         """Whole screenshot pixelated once (device px) so mosaic strokes are cheap."""
@@ -472,7 +474,12 @@ class ScreenshotOverlay(QWidget):
     def edit_text(self, ann):
         """Re-open an existing text label for editing, preserving its style."""
         self.commit_text_editor()
+        idx = self.annotations.index(ann)
         self.annotations.remove(ann)
+        # Stash the original (with its z-position) so Esc restores it — otherwise
+        # cancelling an edit silently deletes the label (commit replaces it, so
+        # commit clears this).
+        self._editing_original = (idx, ann)
         self.open_text_editor(ann.pos, text=ann.text, color=ann.color,
                               font_size=ann.font_size)
         self.update()
@@ -482,6 +489,7 @@ class ScreenshotOverlay(QWidget):
         if editor is None:
             return
         self.text_editor = None
+        self._editing_original = None
         text = editor.toPlainText().strip()
         pos = editor.pos()
         color = editor.ann_color
@@ -496,6 +504,10 @@ class ScreenshotOverlay(QWidget):
             editor = self.text_editor
             self.text_editor = None
             editor.deleteLater()
+            if self._editing_original is not None:
+                idx, ann = self._editing_original
+                self.annotations.insert(min(idx, len(self.annotations)), ann)
+                self._editing_original = None
             self.update()
 
     # ----------------------------------------------------------------- paint
@@ -672,7 +684,7 @@ class ScreenshotOverlay(QWidget):
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
             path = os.path.join(save_dir, f"screenshot_{stamp}.png")
             return path if pixmap.save(path, "PNG") else None
-        except OSError:
+        except (OSError, ValueError):  # ValueError: NUL byte in a corrupt path
             return None
 
     def save_to_file(self):
@@ -684,11 +696,11 @@ class ScreenshotOverlay(QWidget):
         save_dir = self.config.get("save_dir", pictures)
         try:
             os.makedirs(save_dir, exist_ok=True)
-        except OSError:
+        except (OSError, ValueError):
             save_dir = pictures  # fall back to a writable location
             try:
                 os.makedirs(save_dir, exist_ok=True)
-            except OSError:
+            except (OSError, ValueError):
                 save_dir = ""
 
         # The native dialog needs the overlay out of the way to avoid focus fights.
@@ -736,6 +748,32 @@ class ScreenshotOverlay(QWidget):
             self.copy_to_clipboard_and_close()
         else:
             super().keyPressEvent(event)
+
+    def native_on_screen(self):
+        """Whether the native window is genuinely ordered onto the screen.
+
+        Qt's isVisible() only mirrors Qt's own state flag. When macOS pulls
+        the window at the AppKit level without telling Qt — locking the screen
+        mid-capture does exactly that — no hideEvent is delivered and
+        isVisible() keeps answering True, so every Qt-side check is blind to
+        it. Ask AppKit directly on macOS; on other platforms (or if the query
+        fails) fall back to Qt's answer.
+        """
+        if QGuiApplication.platformName() != "cocoa":
+            return self.isVisible()
+        try:
+            import ctypes
+
+            import objc  # PyObjC — already present on macOS via pynput
+
+            view = objc.objc_object(c_void_p=ctypes.c_void_p(int(self.winId())))
+            win = view.window()
+            return win is not None and bool(win.isVisible())
+        except Exception as e:
+            # Surfaced into app.log by TrayApp: a silent fallback here would
+            # let the lock-screen zombie reappear with nothing to debug from.
+            self.native_check_error = e
+            return self.isVisible()
 
     def hideEvent(self, event):
         super().hideEvent(event)

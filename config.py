@@ -57,9 +57,21 @@ def load_config():
     cfg["hotkey"] = hk
 
     # save_dir must be a usable string path (a null/number would make
-    # os.makedirs raise TypeError and crash the save/open flows).
-    if not isinstance(cfg.get("save_dir"), str) or not cfg["save_dir"].strip():
+    # os.makedirs raise TypeError, an embedded NUL byte ValueError — either
+    # crashes the save/open flows).
+    if (not isinstance(cfg.get("save_dir"), str) or not cfg["save_dir"].strip()
+            or "\x00" in cfg["save_dir"]):
         cfg["save_dir"] = DEFAULTS["save_dir"]
+
+    # default_color must be something QColor actually understands: a dict/list
+    # raises TypeError inside ScreenshotOverlay.__init__ (so every capture dies
+    # before the overlay appears), and null or a typo'd name yields an invalid
+    # colour that draws nothing.
+    from PySide6.QtGui import QColor  # deferred: config loads before the app
+
+    v = cfg.get("default_color")
+    if not isinstance(v, str) or not QColor(v).isValid():
+        cfg["default_color"] = DEFAULTS["default_color"]
 
     # numeric fields must be positive numbers (used in arithmetic / QPen widths).
     for key in ("default_width", "default_font_size"):

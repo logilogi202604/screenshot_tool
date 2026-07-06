@@ -139,19 +139,30 @@ class TrayApp:
         from PySide6.QtGui import QDesktopServices
 
         d = self.config["save_dir"]
-        os.makedirs(d, exist_ok=True)
+        try:
+            os.makedirs(d, exist_ok=True)
+        except (OSError, ValueError):
+            log(f"open_save_dir: cannot create {d!r}")
         QDesktopServices.openUrl(QUrl.fromLocalFile(d))
 
     def start_capture(self):
         log(f"start_capture (busy={self.overlay is not None}, pending={self._pending_capture})")
-        # Safety net: an overlay that got hidden without ever closing (macOS
-        # hides Qt.Tool windows on app deactivation, skipping closeEvent) would
-        # otherwise block every future capture. Discard it and carry on.
-        if (self.overlay is not None and not self.overlay.isVisible()
-                and not getattr(self.overlay, "dialog_open", False)):
-            log("discarding stale hidden overlay")
-            stale, self.overlay = self.overlay, None
-            stale.close()
+        # Safety net: an overlay that is no longer really on screen but never
+        # closed would block every future capture. Two known macOS paths get
+        # here: app deactivation hides Qt.Tool windows (isVisible() goes
+        # False), and locking the screen orders the window out behind Qt's
+        # back — isVisible() stays True, so only the native check sees it.
+        if self.overlay is not None and not getattr(self.overlay, "dialog_open", False):
+            on_screen = self.overlay.native_on_screen()
+            err = getattr(self.overlay, "native_check_error", None)
+            if err is not None:
+                log(f"native visibility check failed ({err!r}); "
+                    f"falling back to qt_visible={self.overlay.isVisible()}")
+            if not on_screen:
+                log(f"discarding stale off-screen overlay "
+                    f"(qt_visible={self.overlay.isVisible()})")
+                stale, self.overlay = self.overlay, None
+                stale.close()
         # Guard against two triggers within the 120ms delay both scheduling a
         # capture (e.g. a fast double Alt+A, or hotkey + tray click).
         if self.overlay is not None or self._pending_capture:

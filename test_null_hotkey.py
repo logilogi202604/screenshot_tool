@@ -1,7 +1,13 @@
 """Verify a THREAD-bound hotkey (hwnd=NULL) both registers persistently and
 delivers WM_HOTKEY to Qt's native event filter."""
-import ctypes
 import sys
+
+if sys.platform != "win32":
+    print("SKIP: test_null_hotkey.py exercises Win32 RegisterHotKey (macOS is "
+          "covered by test_mac.py)")
+    raise SystemExit(0)
+
+import ctypes
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
