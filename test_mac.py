@@ -133,12 +133,13 @@ def test_hidden_overlay_auto_cancels():
     print("D hidden-overlay OK: deactivate-hide cancels once, save-dialog hide survives")
 
 
-def test_trayapp_discards_stale_overlay():
-    """TrayApp.start_capture must recover when the overlay got hidden without
-    closing (whatever the cause) instead of staying busy forever."""
+def _make_tray(cfg):
+    """TrayApp with the hotkey backend faked out (no OS permissions needed).
+
+    The 120ms-deferred real capture is stubbed so tests stay synchronous: the
+    recovery logic under test lives entirely in start_capture.
+    """
     import main as main_mod
-    from config import DEFAULTS
-    from overlay import ScreenshotOverlay
     from PySide6.QtCore import QObject, Signal
 
     class FakeHotkey(QObject):
@@ -156,18 +157,25 @@ def test_trayapp_discards_stale_overlay():
         def unregister(self):
             pass
 
-    cfg = dict(DEFAULTS)
-    cfg["save_dir"] = tempfile.mkdtemp(prefix="shot_")
-
     orig_hotkey = main_mod.GlobalHotkey
     main_mod.GlobalHotkey = FakeHotkey
     try:
         tray = main_mod.TrayApp(app, cfg)
     finally:
         main_mod.GlobalHotkey = orig_hotkey
-    # Keep the test synchronous: the recovery logic under test lives entirely
-    # in start_capture; don't let the 120ms-deferred real capture run later.
     tray._do_capture = lambda: None
+    return tray
+
+
+def test_trayapp_discards_stale_overlay():
+    """TrayApp.start_capture must recover when the overlay got hidden without
+    closing (whatever the cause) instead of staying busy forever."""
+    from config import DEFAULTS
+    from overlay import ScreenshotOverlay
+
+    cfg = dict(DEFAULTS)
+    cfg["save_dir"] = tempfile.mkdtemp(prefix="shot_")
+    tray = _make_tray(cfg)
 
     pm = QPixmap(100, 60)
     pm.fill(QColor("#333333"))
@@ -188,6 +196,129 @@ def test_trayapp_discards_stale_overlay():
     assert tray._pending_capture, "pending flag lost on duplicate trigger"
     tray._pending_capture = False
     print("E trayapp-recovery OK: stale overlay discarded, capture rescheduled")
+
+
+def test_trayapp_discards_locked_out_overlay():
+    """Locking the screen mid-capture orders the overlay out at the AppKit
+    level with NO Qt event: hideEvent never fires and isVisible() keeps
+    returning True, so the hidden-overlay recovery above never triggers.
+    start_capture must trust native_on_screen(), not Qt's cached flag.
+    Regression: 2026-07-06."""
+    from config import DEFAULTS
+    from overlay import ScreenshotOverlay
+
+    cfg = dict(DEFAULTS)
+    cfg["save_dir"] = tempfile.mkdtemp(prefix="shot_")
+    tray = _make_tray(cfg)
+
+    pm = QPixmap(100, 60)
+    pm.fill(QColor("#444444"))
+
+    # Off the cocoa platform native_on_screen must just mirror isVisible():
+    # the platform-specific query only exists on macOS.
+    probe = ScreenshotOverlay(pm, QRect(0, 0, 100, 60), cfg)
+    probe.show()
+    assert probe.native_on_screen() == probe.isVisible(), \
+        "native_on_screen fallback disagrees with isVisible while shown"
+    probe.close()
+
+    # 1) The lock-screen zombie: Qt still says visible, AppKit says gone.
+    stale = ScreenshotOverlay(pm, QRect(0, 0, 100, 60), cfg)
+    stale.finished.connect(tray._on_overlay_finished)  # same wiring as _do_capture
+    tray.overlay = stale
+    stale.show()
+    assert stale.isVisible(), "precondition: Qt must believe the overlay is visible"
+    stale.native_on_screen = lambda: False  # what AppKit reports after the lock
+
+    tray.start_capture()  # must NOT trust isVisible(); discard and proceed
+    assert tray.overlay is None, "locked-out overlay not discarded (busy forever)"
+    assert tray._pending_capture, "capture not rescheduled after discarding overlay"
+    assert stale._closed, "locked-out overlay dropped without being closed"
+    tray._pending_capture = False
+
+    # 2) The save dialog also leaves the overlay natively off screen — that
+    # intentional hide must never be treated as a zombie.
+    dlg = ScreenshotOverlay(pm, QRect(0, 0, 100, 60), cfg)
+    dlg.finished.connect(tray._on_overlay_finished)
+    tray.overlay = dlg
+    dlg.show()
+    dlg.dialog_open = True
+    dlg.native_on_screen = lambda: False
+
+    tray.start_capture()  # busy is correct here: the dialog owns the session
+    assert tray.overlay is dlg, "overlay wrongly discarded while save dialog open"
+    assert not tray._pending_capture, "capture wrongly scheduled during save dialog"
+    dlg.dialog_open = False
+    dlg.close()
+    print("F lock-screen recovery OK: zombie overlay discarded, dialog hide immune")
+
+
+def test_text_edit_cancel_restores_label():
+    """edit_text() removes the label from the list before opening the editor;
+    cancelling (Esc) must put the original back instead of losing it, while
+    committing must replace it without duplicating. Regression: 2026-07-06."""
+    from annotations import RectAnnotation, TextAnnotation
+    from config import DEFAULTS
+    from overlay import ScreenshotOverlay
+
+    pm = QPixmap(200, 120)
+    pm.fill(QColor("#111111"))
+    o = ScreenshotOverlay(pm, QRect(0, 0, 200, 120), dict(DEFAULTS))
+    o.selection = QRect(10, 10, 150, 90)
+    o.has_selection = True
+    ann = TextAnnotation(QColor("#007aff"), 18, QPoint(20, 20), "标注")
+    o.annotations.append(ann)
+    o.annotations.append(RectAnnotation(QColor("#ff0000"), 3, QPoint(30, 30)))
+
+    o.edit_text(ann)
+    assert ann not in o.annotations, "precondition: edit removes the label"
+    o.cancel_text_editor()  # what Esc inside the editor triggers
+    assert ann in o.annotations, "cancelled edit lost the original label"
+    assert o.annotations.index(ann) == 0, "cancel changed the label's z-order"
+
+    o.edit_text(ann)
+    o.text_editor.setPlainText("改过")
+    o.commit_text_editor()
+    texts = [a.text for a in o.annotations if isinstance(a, TextAnnotation)]
+    assert texts == ["改过"], f"commit should replace the label, got {texts}"
+    o.close()
+    print("G text-edit OK: cancel restores the label, commit replaces it")
+
+
+def test_config_sanitizes_corrupt_values():
+    """A hand-edited config.json must never take captures down: a dict colour
+    raises TypeError inside the overlay ctor (every capture dies silently), a
+    NUL byte in save_dir raises ValueError in os.makedirs mid-save.
+    Regression: 2026-07-06 (codex review findings)."""
+    import json
+    import config as config_mod
+    from overlay import ScreenshotOverlay
+
+    tmpdir = tempfile.mkdtemp(prefix="cfg_")
+    orig_dir, orig_path = config_mod.CONFIG_DIR, config_mod.CONFIG_PATH
+    config_mod.CONFIG_DIR = tmpdir
+    config_mod.CONFIG_PATH = os.path.join(tmpdir, "config.json")
+    try:
+        with open(config_mod.CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"default_color": {}, "save_dir": "bad\x00dir",
+                       "default_width": -5}, f)
+        cfg = config_mod.load_config()
+    finally:
+        config_mod.CONFIG_DIR, config_mod.CONFIG_PATH = orig_dir, orig_path
+
+    assert cfg["default_color"] == config_mod.DEFAULTS["default_color"], \
+        f"corrupt colour not sanitized: {cfg['default_color']!r}"
+    assert cfg["save_dir"] == config_mod.DEFAULTS["save_dir"], \
+        f"NUL save_dir not sanitized: {cfg['save_dir']!r}"
+    assert cfg["default_width"] == config_mod.DEFAULTS["default_width"]
+
+    # The sanitized config must build an overlay without raising — this is the
+    # exact construction that used to die inside _do_capture.
+    pm = QPixmap(50, 40)
+    pm.fill(QColor("#222222"))
+    o = ScreenshotOverlay(pm, QRect(0, 0, 50, 40), cfg)
+    o.close()
+    print("H config-sanitize OK: corrupt colour/save_dir fall back to defaults")
 
 
 def test_hotkey_main_thread_delivery():
@@ -220,6 +351,9 @@ if __name__ == "__main__":
     test_single_instance_cross_process()
     test_hidden_overlay_auto_cancels()
     test_trayapp_discards_stale_overlay()
+    test_trayapp_discards_locked_out_overlay()
+    test_text_edit_cancel_restores_label()
+    test_config_sanitizes_corrupt_values()
     test_hotkey_main_thread_delivery()   # runs the event loop; keep last
     print("\nALL MAC AUTO-TESTS PASSED")
     sys.stdout.flush()

@@ -1,5 +1,7 @@
 """Real screen-grab test: capture the live screen, annotate, export a PNG."""
+import os
 import sys
+import tempfile
 
 from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QColor, QGuiApplication
@@ -50,6 +52,6 @@ overlay.annotations.append(NumberAnnotation(QColor("#ff9500"), 1, QPoint(120, 13
 overlay.annotations.append(NumberAnnotation(QColor("#5856d6"), 2, QPoint(470, 360), 16))
 
 result = overlay.render_result()
-out = r"D:\code\screenshot_tool\_capture_test.png"
+out = os.path.join(tempfile.gettempdir(), "_capture_test.png")
 result.save(out)
 print("saved:", out, result.width(), "x", result.height())

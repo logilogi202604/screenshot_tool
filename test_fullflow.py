@@ -1,6 +1,12 @@
 """Diagnose the full hotkey -> capture -> overlay chain in the real app."""
-import ctypes
 import sys
+
+if sys.platform != "win32":
+    print("SKIP: test_fullflow.py drives the Win32 hotkey path (macOS is covered "
+          "by test_mac.py)")
+    raise SystemExit(0)
+
+import ctypes
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
