@@ -321,6 +321,32 @@ def test_config_sanitizes_corrupt_values():
     print("H config-sanitize OK: corrupt colour/save_dir fall back to defaults")
 
 
+def test_hotkey_tap_mask_excludes_system_defined():
+    """pynput's default tap also subscribes to NSSystemDefined (media-key)
+    events and converts each to NSEvent on the listener thread; converting the
+    caps-lock input-source-switch sequence trips a main-queue assertion in
+    HIToolbox and kills the whole process with SIGILL. The mac backend must
+    narrow the tap to plain key events. Regression: 2026-07-06 crash."""
+    if sys.platform != "darwin":
+        print("SKIP: tap-mask test needs pynput's darwin backend")
+        return
+    from pynput import keyboard
+    from pynput.keyboard import _darwin
+    from hotkey_mac import _listener_class
+
+    cls = _listener_class(keyboard)
+    assert issubclass(cls, keyboard.GlobalHotKeys), \
+        "narrowed listener must still be a GlobalHotKeys"
+    mask = cls._EVENTS
+    assert not mask & _darwin.CGEventMaskBit(_darwin.NSSystemDefined), \
+        "tap still subscribes to NSSystemDefined (caps-lock SIGILL path live)"
+    for etype, name in ((_darwin.kCGEventKeyDown, "keyDown"),
+                        (_darwin.kCGEventKeyUp, "keyUp"),
+                        (_darwin.kCGEventFlagsChanged, "flagsChanged")):
+        assert mask & _darwin.CGEventMaskBit(etype), f"tap lost {name} events"
+    print("I tap-mask OK: NSSystemDefined dropped, key events kept")
+
+
 def test_hotkey_main_thread_delivery():
     from hotkey_mac import GlobalHotkey
 
@@ -354,6 +380,7 @@ if __name__ == "__main__":
     test_trayapp_discards_locked_out_overlay()
     test_text_edit_cancel_restores_label()
     test_config_sanitizes_corrupt_values()
+    test_hotkey_tap_mask_excludes_system_defined()
     test_hotkey_main_thread_delivery()   # runs the event loop; keep last
     print("\nALL MAC AUTO-TESTS PASSED")
     sys.stdout.flush()
