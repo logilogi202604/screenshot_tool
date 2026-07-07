@@ -30,6 +30,14 @@ And pynput matches character keys by the character the key *produces* under the
 active layout (via ``canonical`` → ``KeyCode.from_char(char.lower())``), not by a
 fixed keycode, so for letter/digit keys we match the produced Unicode character
 too; only layout-stable special keys (F-keys, space, ...) are matched by keycode.
+
+pynput's listener additionally taps ``NSSystemDefined`` events (media keys) and
+converts each one with ``NSEvent.eventWithCGEvent_`` *on the listener thread*.
+Converting the caps-lock sequence events macOS emits when Caps Lock switches
+input sources — the default once a CJK input method is installed — runs
+HIToolbox code that asserts it is on the main queue, killing the whole process
+with SIGILL. We never consume media keys, so ``_listener_class`` narrows the
+tap mask to plain key events; the fatal conversion becomes unreachable.
 """
 import time
 
@@ -54,6 +62,30 @@ def _key_token(key):
         return _KEY_TOKENS[key]
     # Single letters/digits map to themselves, lower-cased (pynput is case-based).
     return key[:1].lower() if key else "a"
+
+
+def _listener_class(keyboard):
+    """A ``GlobalHotKeys`` subclass whose tap only listens for plain key events.
+
+    Drops ``NSSystemDefined`` (media keys, caps-lock sequences) from pynput's
+    event mask so those events never reach its handler — see the module
+    docstring for the SIGILL this prevents. Modifier tracking is unaffected:
+    Caps Lock state itself arrives as ``flagsChanged``, which we keep. If a
+    future pynput stops reading ``_EVENTS`` this override is silently ignored
+    and we merely revert to upstream behavior.
+    """
+    try:
+        import Quartz
+        mask = (Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)
+                | Quartz.CGEventMaskBit(Quartz.kCGEventKeyUp)
+                | Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged))
+    except Exception:
+        return keyboard.GlobalHotKeys
+
+    class KeyEventsOnlyHotKeys(keyboard.GlobalHotKeys):
+        _EVENTS = mask
+
+    return KeyEventsOnlyHotKeys
 
 
 # macOS virtual keycodes for the layout-independent special keys. Character keys
@@ -184,11 +216,12 @@ class GlobalHotkey(QObject):
             self.last_error = f"pynput unavailable: {e}"
             return False
 
+        listener_cls = _listener_class(keyboard)
         intercept = self._make_intercept()
         variants = ([{"darwin_intercept": intercept}] if intercept else []) + [{}]
         for kwargs in variants:
             try:
-                listener = keyboard.GlobalHotKeys(
+                listener = listener_cls(
                     {self._spec: self._on_activate}, **kwargs)
                 listener.start()  # spawns the listener thread
                 if self._await_listener(listener):
