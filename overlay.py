@@ -154,6 +154,7 @@ class ScreenshotOverlay(QWidget):
         self.dialog_open = False
         self._closed = False
         self.native_check_error = None  # last native_on_screen() failure, if any
+        self.native_state = None  # last native_on_screen() detail, for the log
 
     def _build_mosaic_pix(self):
         """Whole screenshot pixelated once (device px) so mosaic strokes are cheap."""
@@ -750,14 +751,20 @@ class ScreenshotOverlay(QWidget):
             super().keyPressEvent(event)
 
     def native_on_screen(self):
-        """Whether the native window is genuinely ordered onto the screen.
+        """Whether the native window is genuinely showing on the screen.
 
         Qt's isVisible() only mirrors Qt's own state flag. When macOS pulls
         the window at the AppKit level without telling Qt — locking the screen
         mid-capture does exactly that — no hideEvent is delivered and
         isVisible() keeps answering True, so every Qt-side check is blind to
-        it. Ask AppKit directly on macOS; on other platforms (or if the query
-        fails) fall back to Qt's answer.
+        it. NSWindow.isVisible can lie too: a capture fired right after
+        wake-from-sleep can leave the window ordered in but never composited
+        by the WindowServer (isVisible YES, yet nothing on screen and
+        CGWindowList doesn't count it as onscreen — seen 2026-07-08). So also
+        require occlusionState — the WindowServer's own "is any of this
+        window actually showing" — and isOnActiveSpace, which catches the
+        overlay stranded on another Space. On other platforms (or if the
+        query fails) fall back to Qt's answer.
         """
         if QGuiApplication.platformName() != "cocoa":
             return self.isVisible()
@@ -768,7 +775,18 @@ class ScreenshotOverlay(QWidget):
 
             view = objc.objc_object(c_void_p=ctypes.c_void_p(int(self.winId())))
             win = view.window()
-            return win is not None and bool(win.isVisible())
+            if win is None:
+                self.native_state = "no NSWindow"
+                return False
+            NSWindowOcclusionStateVisible = 1 << 1
+            visible = bool(win.isVisible())
+            on_space = bool(win.isOnActiveSpace())
+            composited = bool(win.occlusionState() & NSWindowOcclusionStateVisible)
+            self.native_state = (
+                f"visible={visible} on_active_space={on_space} "
+                f"composited={composited}"
+            )
+            return visible and on_space and composited
         except Exception as e:
             # Surfaced into app.log by TrayApp: a silent fallback here would
             # let the lock-screen zombie reappear with nothing to debug from.

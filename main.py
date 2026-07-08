@@ -148,10 +148,13 @@ class TrayApp:
     def start_capture(self):
         log(f"start_capture (busy={self.overlay is not None}, pending={self._pending_capture})")
         # Safety net: an overlay that is no longer really on screen but never
-        # closed would block every future capture. Two known macOS paths get
+        # closed would block every future capture. Three known macOS paths get
         # here: app deactivation hides Qt.Tool windows (isVisible() goes
-        # False), and locking the screen orders the window out behind Qt's
-        # back — isVisible() stays True, so only the native check sees it.
+        # False); locking the screen orders the window out behind Qt's back —
+        # isVisible() stays True, so only the native check sees it; and a
+        # capture fired right after wake-from-sleep can leave the window
+        # ordered in but never composited — even NSWindow.isVisible says YES,
+        # only occlusionState exposes it (2026-07-08).
         if self.overlay is not None and not getattr(self.overlay, "dialog_open", False):
             on_screen = self.overlay.native_on_screen()
             err = getattr(self.overlay, "native_check_error", None)
@@ -160,7 +163,8 @@ class TrayApp:
                     f"falling back to qt_visible={self.overlay.isVisible()}")
             if not on_screen:
                 log(f"discarding stale off-screen overlay "
-                    f"(qt_visible={self.overlay.isVisible()})")
+                    f"(qt_visible={self.overlay.isVisible()}, "
+                    f"native={getattr(self.overlay, 'native_state', None)})")
                 stale, self.overlay = self.overlay, None
                 stale.close()
         # Guard against two triggers within the 120ms delay both scheduling a
@@ -194,6 +198,9 @@ class TrayApp:
             self.overlay = None
 
     def _on_overlay_finished(self):
+        # Logged because cancels are otherwise invisible in app.log — a capture
+        # with no `saved` line is indistinguishable from a stuck overlay.
+        log("overlay finished")
         self.overlay = None
 
     def _on_saved(self, path):
