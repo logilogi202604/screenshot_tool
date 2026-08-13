@@ -106,12 +106,12 @@ print("UNIT OK: filename sanitising (posix + windows) + byte truncation + collis
 
 # --------------------------------------------------------- addressing / peers
 
-assert is_lan_ip("192.168.0.102") and is_lan_ip("10.1.2.3") and is_lan_ip("172.16.0.1")
+assert is_lan_ip("192.168.1.51") and is_lan_ip("10.1.2.3") and is_lan_ip("172.16.0.1")
 assert not is_lan_ip("198.18.0.1"), "proxy fake-ip range must not count as LAN"
 assert not is_lan_ip("172.32.0.1") and not is_lan_ip("8.8.8.8")
 
-assert parse_peer("192.168.0.103", 53318)["port"] == 53318
-assert parse_peer("192.168.0.103:9999", 53318)["port"] == 9999
+assert parse_peer("192.168.1.50", 53318)["port"] == 53318
+assert parse_peer("192.168.1.50:9999", 53318)["port"] == 9999
 for bad in ("", "   ", ":53318", "host:notaport", "host:0", "host:70000", None, 5):
     assert parse_peer(bad, 53318) is None, f"parse_peer accepted {bad!r}"
 

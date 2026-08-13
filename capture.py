@@ -4,7 +4,7 @@ The obvious one-liner, `primaryScreen().grabWindow(0, *virtualGeometry())`, is
 wrong on Windows the moment there is more than one monitor and the scale factor
 is fractional: Qt then reports screen **positions** in device pixels but screen
 **sizes** in logical pixels, so `virtualGeometry()` is a mixed-unit rect. On the
-four-monitor 125% machine this project is used with, Qt reported a 4608x2614
+four-monitor 125% setup this was measured on, Qt reported a 4608x2614
 desktop where Windows reports 5120x2902 — a 640x366 overshoot — and every
 monitor after the first was composited at the wrong offset.
 
