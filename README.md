@@ -23,6 +23,8 @@
   已添加的文字可**点住拖动改位置**，**双击重新编辑**（保留原颜色/字号）。
 - **撤销 / 保存 / 复制**：`Ctrl+Z` 撤销，`Ctrl+S` 保存 PNG/JPG，`Ctrl+C` 或 `Enter` 复制到剪贴板。
 - **截图发给 Claude Code**：确认时自动保存一份带时间戳的 PNG 并把路径放进剪贴板，详见下方「发给 Claude Code」。
+- **局域网传文件**：托盘里直接把文件发给同网段的另一台机器（Windows ↔ macOS），
+  配对码鉴权、分块流式传输、不限文件大小，详见下方「局域网传文件」。
 - **高分屏**：自动处理 DPI 缩放，导出为屏幕原始分辨率，清晰不糊。
 
 ## 安装
@@ -127,6 +129,63 @@ Windows 的终端**无法直接 `Ctrl+V` 粘贴剪贴板里的图片**（这是 
 > 托盘会弹通知告诉你保存到了哪里。若你只想要「纯图片进剪贴板」的老行为（粘进聊天软件），
 > 把配置里的 `autosave_on_copy` 设为 `false` 即可。
 
+## 局域网传文件
+
+同一个局域网里的两台机器（Windows ↔ macOS）可以直接互传文件，不经过云、不用装第二个软件。
+实现见 `fileshare.py`，**只用标准库**（UDP 广播发现 + HTTP 传输），不增加任何依赖。
+
+### 首次配对
+
+传输由一个**共享配对码**把关——局域网上谁都能广播自己，所以发现机制不能当认证用。
+首次运行会自动生成配对码，两台必须一致：
+
+1. A 机托盘 → **配对码 → 复制本机配对码**
+2. B 机托盘 → **配对码 → 输入对方配对码**，粘贴，确定
+
+> 如果两台之间已经在用 Deskflow 共享键鼠，剪贴板是同步的，配对码复制完直接走过去粘贴即可。
+
+### 日常使用
+
+托盘 → **发送文件到…** → 选目标机器 → 选文件（可多选）。
+对方托盘弹通知，文件落在 `fileshare_recv_dir`（默认 `~/Downloads/ScreenshotTool`），
+托盘 → **打开接收目录** 可直接打开。
+
+传输过程中托盘的悬停提示会显示百分比。**文件是 256KB 分块流式读写的，
+传多大的文件内存占用都不变**，不受剪贴板大小限制那类天花板影响。
+
+### 发现不到对方怎么办
+
+UDP 广播不是在每种网络下都能通——**本机跑着 TUN 模式的代理，默认路由被它接管**，
+广播可能被送到 utun 虚拟网卡上出不去。这种情况直接在配置里写死对方 IP：
+
+```json
+"fileshare_peers": ["192.168.0.103"]
+```
+
+写死的 peer **永远出现在发送菜单里**，不依赖广播。带端口写成 `"192.168.0.103:45318"`。
+
+> 防火墙：首次运行时 Windows 和 macOS 都会弹窗询问是否允许接受入站连接，**必须允许**，
+> 否则只能发不能收。
+
+### 端口为什么选 45317 / 45318
+
+装了 Docker / WSL / Hyper-V 的 Windows 会把**动态端口区（49152 以上）**的大段端口预留给虚拟化，
+绑进去会失败并报 `WinError 10013`（"以一种访问权限不允许的方式做了一个访问套接字的尝试"）。
+最早选的 53318 就正好落在某台机器的 `53318-53417` 预留段里，Mac 上完全测不出来。
+
+**更坑的是这些预留段每次重启会重新划分**，所以光换个号码治标不治本。两道防线：
+
+1. 默认端口选在 **49152 以下**，那一片 Windows 只预留了极少数（如 5985、47001），且不会重划。
+2. 万一还是绑不上，程序会**自动退到系统分配的随机端口**。广播里带的是真实端口，所以自动发现
+   照常工作；只有手动写死 IP 的对端需要补上新端口号（托盘会弹通知告诉你是多少）。
+
+查本机预留了哪些段：
+
+```powershell
+netsh int ipv4 show excludedportrange protocol=tcp
+netsh int ipv4 show excludedportrange protocol=udp
+```
+
 ## 配置
 
 首次运行会在 `~/.screenshot_tool/config.json`（即
@@ -139,9 +198,20 @@ Windows 的终端**无法直接 `Ctrl+V` 粘贴剪贴板里的图片**（这是 
   "default_color": "#ff3b30",
   "default_width": 4,
   "default_font_size": 18,
-  "autosave_on_copy": true
+  "autosave_on_copy": true,
+
+  "fileshare_enabled": true,
+  "fileshare_port": 45318,
+  "fileshare_token": "（首次运行自动生成，两台必须一致）",
+  "fileshare_name": "",
+  "fileshare_recv_dir": "C:\\Users\\<你>\\Downloads\\ScreenshotTool",
+  "fileshare_peers": []
 }
 ```
+
+> **`fileshare_enabled` 设为 `false`** 就完全不绑定任何端口，程序恢复到加这个功能之前的
+> 「一个网络连接都不建」的状态。
+> `fileshare_name` 留空则用主机名；`fileshare_peers` 用于广播不通时写死对方 IP。
 
 > **改热键**：把 `hotkey` 里的 `ctrl`/`alt`/`shift`/`win` 设为 `true`/`false`，`key` 改成想要的键
 > （如 `"F1"`、`"Q"`）。例如想用 `Ctrl+Shift+A` 就是
@@ -194,6 +264,8 @@ pip install pyinstaller
 | `toolbar.py` | 浮动工具栏（工具 / 颜色 / 线宽 / 撤销 / 保存 / 复制 / 完成） |
 | `annotations.py` | 标注图形类（矩形 / 椭圆 / 箭头 / 画笔 / 文字） |
 | `config.py` | 配置读写（默认热键按平台区分） |
+| `capture.py` | 抓整个虚拟桌面：逐屏抓取按原生坐标拼接（绕开 Qt 多屏几何的单位不一致） |
+| `fileshare.py` | 局域网传文件：UDP 广播发现 + HTTP 分块传输 + 配对码鉴权（纯标准库） |
 | `run.bat` / `build.bat` | Windows 启动 / 打包（PyInstaller `.exe`） |
 | `run.command` / `build_mac.sh` | macOS 启动 / 打包（PyInstaller `.app`） |
 | `test_*.py` | 冒烟测试：核心渲染 / 全局热键 / 真实截图；`test_mac.py` 为 macOS 平台逻辑测试 |
@@ -218,13 +290,29 @@ QT_QPA_PLATFORM=offscreen python3 test_smoke.py   # 核心渲染
 QT_QPA_PLATFORM=offscreen python3 test_mac.py     # 热键跨线程 / 单实例互斥 / 复制+自动保存
 ```
 
+局域网传文件（走真实 socket，跑在本机回环上，两端都不需要另一台机器）：
+
+```bash
+python3 test_fileshare.py
+```
+
+覆盖：文件名消毒（路径穿越 / Windows 反斜杠 / 隐藏文件）、同名不覆盖、
+5 MiB 真实传输后比对 sha256、中文文件名、配对码不符时**必须干净拒绝且不落盘**。
+
 ## 已知限制
 
 - **Windows / macOS 双平台**。热键实现按平台分离：Windows 用 Win32 `RegisterHotKey`（系统级、会
   “吃掉”触发键）；macOS 用 `pynput`（需「输入监控」权限，且**不会吃掉**触发键，故默认用不产生文本
   的 Cmd 组合）。Linux 暂无热键后端，但仍可点托盘图标截图。
 - **macOS 需要系统权限**（屏幕录制 + 输入监控 / 辅助功能），见上文；未授予时对应功能失效。
-- 多显示器**混合不同 DPI** 时截图可能有缩放误差；相同缩放比例下正常。
+- 多显示器**混合不同缩放比例**时，缩放较低的那些屏会被放大到最高的那档再合成，
+  **位置是准的、清晰度会略软**。相同缩放比例（哪怕 125% 这种小数）下逐像素精确、
+  不做任何重采样。两条路径见 `capture.py` 的 `_composite_uniform` / `_composite_mixed`。
+- **传文件的自动发现依赖 UDP 广播**，不是所有网络都通：路由器隔离客户端（AP isolation）、
+  或本机跑着接管默认路由的 TUN 代理时，广播可能出不去。此时在
+  `fileshare_peers` 里写死对方 IP 即可，传输本身不受影响。
+- **传文件没有加密**。局域网内明文 HTTP，配对码只防止别人往你硬盘写东西，
+  **不防监听**。别用它传敏感文件。
 
 ## 许可证
 
