@@ -49,8 +49,8 @@ DEFAULTS = {
     "fileshare_recv_dir": os.path.join(os.path.expanduser("~"), "Downloads", "ScreenshotTool"),
     # Fallback peers, always offered in the send menu even when no announce has
     # been heard. Needed when UDP broadcast can't get through — a proxy running
-    # in TUN mode owns the default route on this machine. Format: "192.168.0.103"
-    # or "192.168.0.103:53318".
+    # in TUN mode can own the default route. Format: "192.168.1.50" or
+    # "192.168.1.50:45318".
     "fileshare_peers": [],
 }
 

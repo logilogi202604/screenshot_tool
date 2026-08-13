@@ -36,7 +36,8 @@ from PySide6.QtCore import QObject, Signal
 # Deliberately below 49152, the start of the Windows dynamic port range. Windows
 # hands large blocks in that range to Hyper-V/WSL as "excluded port ranges", and
 # binding inside one fails with WinError 10013 — which is how the first choice
-# here (53317/53318) died on the Windows box: 53318 landed inside 53318-53417.
+# here (53317/53318) died on a Windows test machine: 53318 landed inside
+# 53318-53417.
 # Worse, those blocks are re-drawn on every reboot, so a port that works today
 # can be unbindable tomorrow. Below 49152 the machine only reserved 5985 and
 # 47001, and nothing re-draws it.
@@ -389,9 +390,9 @@ class FileShareService(QObject):
         self.id = secrets.token_hex(8)
 
         # Always-offered fallback peers. UDP broadcast does not survive every
-        # network — this machine runs a TUN-mode proxy that owns the default
-        # route — and a peer you can name by IP should not be hidden just
-        # because its announce never arrived.
+        # network — a proxy running in TUN mode can own the default route —
+        # and a peer you can name by IP should not be hidden just because its
+        # announce never arrived.
         default_port = int(config["fileshare_port"])
         self._manual_peers = [
             p for p in (parse_peer(e, default_port) for e in config.get("fileshare_peers") or [])
@@ -585,7 +586,7 @@ class FileShareService(QObject):
 
         The receive socket is bound to every interface, so sending from it lets
         the routing table pick the egress — and on a machine with several
-        interfaces that choice is usually wrong. The Windows box here has five
+        interfaces that choice is usually wrong. A Windows box with five
         (Docker, WSL, VMware) and its limited broadcast never reached the LAN,
         so the Mac never saw it while the Mac's own announces got through.
         Binding the sender to the LAN address pins the interface.
